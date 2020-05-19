@@ -5,6 +5,7 @@
            [java.time.temporal ChronoUnit]
            [java.util Locale])
   (:require [ring.util.codec :as codec]
+            [ring.util.response :refer [bind]]
             [clojure.string :as str]
             [ring.util.parsing :refer [re-token]]))
 
@@ -211,7 +212,7 @@
       (-> request
           (cookies-request options)
           handler
-          (cookies-response options)))
+          (bind cookies-response options)))
      ([request respond raise]
       (handler (cookies-request request options)
                (fn [response] (respond (cookies-response response options)))

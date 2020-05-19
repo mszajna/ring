@@ -2,7 +2,8 @@
   "Middleware to simplify replying to HEAD requests.
 
   A response to a HEAD request should be identical to a GET request, with the
-  exception that a response to a HEAD request should have an empty body.")
+  exception that a response to a HEAD request should have an empty body."
+  (:require [ring.util.response :refer [bind]]))
 
 (defn head-request
   "Turns a HEAD request into a GET."
@@ -30,7 +31,7 @@
      (-> request
          head-request
          handler
-         (head-response request)))
+         (bind head-response request)))
     ([request respond raise]
      (handler (head-request request)
               (fn [response] (respond (head-response response request)))

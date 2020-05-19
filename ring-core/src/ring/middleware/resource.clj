@@ -31,11 +31,13 @@
 (defn- wrap-resource-prefer-handler [handler root-path options]
   (fn
     ([request]
-     (let [response (handler request)]
-       (if (= 404 (:status response))
-         (or (resource-request request root-path options)
-             response)
-         response)))
+     (response/bind
+      (handler request)
+      (fn [response]
+        (if (= 404 (:status response))
+          (or (resource-request request root-path options)
+              response)
+          response))))
     ([request respond raise]
      (handler request
               (fn [response]

@@ -9,7 +9,25 @@
             [hiccup.page :refer [html5]]
             [clj-stacktrace.core :refer :all]
             [clj-stacktrace.repl :refer :all]
-            [ring.util.response :refer [content-type response status]]))
+            [ring.util.response :refer [content-type response status async?]]))
+
+(defn- cs-handle [^java.util.concurrent.CompletionStage cs f]
+  (.handle cs (reify java.util.function.BiFunction (apply [_ v t] (f v t)))))
+
+(defn- handler-catch
+  [handler request error-handler]
+  (try
+    (let [response (handler request)]
+      (if (async? response)
+        (cs-handle
+         response
+         (fn [response-map ex]
+           (if ex
+             (error-handler ex)
+             response-map)))
+        response))
+    (catch Throwable ex
+      (error-handler ex))))
 
 (defn wrap-stacktrace-log
   "Wrap a handler such that exceptions are logged to *err* and then rethrown.
@@ -22,11 +40,7 @@
    (let [color? (:color? options)]
      (fn
        ([request]
-        (try
-          (handler request)
-          (catch Throwable ex
-            (pst-on *err* color? ex)
-            (throw ex))))
+        (handler-catch handler request (fn [ex] (pst-on *err* color? ex) (throw ex))))
        ([request respond raise]
         (try
           (handler request respond (fn [ex] (pst-on *err* color? ex) (raise ex)))
@@ -94,10 +108,7 @@
   [handler]
   (fn
     ([request]
-     (try
-       (handler request)
-       (catch Throwable ex
-         (ex-response request ex))))
+     (handler-catch handler request (fn [ex] (ex-response request ex))))
     ([request respond raise]
      (try
        (handler request respond (fn [ex] (respond (ex-response request ex))))

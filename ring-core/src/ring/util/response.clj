@@ -7,7 +7,8 @@
             [ring.util.time :refer [format-date]])
   (:import [java.io File]
            [java.util Date]
-           [java.net URL URLDecoder URLEncoder]))
+           [java.net URL URLDecoder URLEncoder]
+           [java.util.concurrent CompletionStage CompletableFuture]))
 
 (def ^{:added "1.4"} redirect-status-codes
   "Map a keyword to a redirect status code."
@@ -343,3 +344,42 @@
            (if (or (not (instance? File (:body response)))
                    (safe-file-resource? response options))
              response)))))))
+
+(defn- cs-then-compose [^CompletionStage cs f]
+  (.thenCompose cs (reify java.util.function.Function (apply [_ v] (f v)))))
+
+(defn async?
+  "Returns true if response is a CompletionStage, otherwise false."
+  [response]
+  (instance? CompletionStage response))
+
+(defn to-async
+  "If response is not a Completion stage, wraps it in
+  CompletableFuture/completedFuture."
+  [response]
+  (if (async? response)
+    response
+    (CompletableFuture/completedFuture response)))
+
+(defn bind
+  "Applies f to the possibly asynchronous response. If response is a
+  CompletionStage, f is applied to the response map it wraps when and if
+  that becomes available. f is expected to return a possibly asynchronous
+  response"
+  [response f & args]
+  (if (async? response)
+    (cs-then-compose
+     response
+     (fn [response-map] (to-async (apply f response-map args))))
+    (apply f response-map args)))
+
+(defn from-3arity
+  "Turns an asynchronous 3-arity handler into a CompletionStage based 1-arity
+  one."
+  [handler]
+  (fn [request]
+    (let [cf (new CompletableFuture)]
+      (handler request
+               (fn [response] (.complete cf response))
+               (fn [ex] (.completeExceptionally cf ex)))
+      cf)))

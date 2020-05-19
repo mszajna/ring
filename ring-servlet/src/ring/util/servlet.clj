@@ -2,9 +2,11 @@
   "Compatibility functions for turning a ring handler into a Java servlet."
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
-            [ring.core.protocols :as protocols])
+            [ring.core.protocols :as protocols]
+            [ring.util.response :refer [from-3arity]])
   (:import [java.io File InputStream FileInputStream]
            [java.util Locale]
+           [java.util.concurrent CompletionStage]
            [javax.servlet AsyncContext]
            [javax.servlet.http HttpServlet
                                HttpServletRequest
@@ -105,26 +107,9 @@
      (let [output-stream (make-output-stream response context)]
        (protocols/write-body-to-stream body response-map output-stream)))))
 
-(defn- make-blocking-service-method [handler]
-  (fn [servlet request response]
-    (-> request
-        (build-request-map)
-        (merge-servlet-keys servlet request response)
-        (handler)
-        (->> (update-servlet-response response)))))
-
-(defn- make-async-service-method [handler]
-  (fn [servlet ^HttpServletRequest request ^HttpServletResponse response]
-    (let [^AsyncContext context (.startAsync request)]
-      (handler
-       (-> request
-           (build-request-map)
-           (merge-servlet-keys servlet request response))
-       (fn [response-map]
-         (update-servlet-response response context response-map))
-       (fn [^Throwable exception]
-         (.sendError response 500 (.getMessage exception))
-         (.complete context))))))
+(defn- cs-when-complete [^CompletionStage cs f]
+  (.whenComplete cs (reify java.util.function.BiConsumer
+                      (accept [_ v t] (f v t)))))
 
 (defn make-service-method
   "Turns a handler into a function that takes the same arguments and has the
@@ -132,9 +117,24 @@
   ([handler]
    (make-service-method handler {}))
   ([handler options]
-   (if (:async? options)
-     (make-async-service-method handler)
-     (make-blocking-service-method handler))))
+   (let [handler (if (:async? options) (from-3arity handler) handler]
+     (fn [servlet ^HttpServletRequest request ^HttpServletResponse response]
+       (let [cs-or-response-map
+             (-> request
+                 (build-request-map)
+                 (merge-servlet-keys servlet request response)
+                 handler)]
+         (if (instance? CompletionStage cs-or-response-map)
+           (let [^AsyncContext context (.startAsync request)]
+             (cs-when-complete
+              cs-or-response-map
+              (fn [response-map exception]
+                (if exception
+                    (do
+                      (.sendError response 500 (.getMessage exception))
+                      (.complete context))
+                   (update-servlet-response response context response-map)))))
+           (update-servlet-response response cs-or-response-map))))))))
 
 (defn servlet
   "Create a servlet from a Ring handler."

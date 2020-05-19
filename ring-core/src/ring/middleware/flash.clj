@@ -1,6 +1,7 @@
 (ns ring.middleware.flash
   "Middleware that adds session-based flash store that persists only to the
-  next request in the same session.")
+  next request in the same session."
+  (:require [ring.util.response :refer [bind]]))
 
 (defn flash-request
   "Adds :flash key to request from :_flash in session."
@@ -36,7 +37,7 @@
   (fn
     ([request]
      (let [request (flash-request request)]
-       (-> (handler request) (flash-response request))))
+       (-> (handler request) (bind flash-response request))))
     ([request respond raise]
      (let [request (flash-request request)]
        (handler request
